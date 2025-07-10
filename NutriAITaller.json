@@ -1,0 +1,540 @@
+{
+  "name": "NutriAI",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "14e7c683-cd81-4d7c-b9f0-8643b78d7916",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        160,
+        -560
+      ],
+      "webhookId": "b31fb3fd-d268-41c5-8a19-629d71412de6",
+      "credentials": {
+        "telegramApi": {
+          "id": "CKQwsF0GZQ3YH15M",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "=    {{ $json.message }}",
+        "additionalFields": {}
+      },
+      "id": "e81465f3-57d5-43c1-b03d-448fa89f1c65",
+      "name": "Telegram: Send Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        -560
+      ],
+      "webhookId": "b5acdc8d-2b13-4b20-a1d3-2bc11bc6b419",
+      "credentials": {
+        "telegramApi": {
+          "id": "CKQwsF0GZQ3YH15M",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Este es el código completo para el Nodo de Función.\n\n// Paso 1: Verificar que recibimos un mensaje de Telegram con texto.\nconst message = $json.message;\nif (!message || !message.text) {\n  // Si no es un mensaje con texto, detenemos el flujo aquí.\n  return null;\n}\n\nconst text = message.text;\n\n// Paso 2: Usar una expresión regular para ver si el texto coincide con nuestro comando.\n// Buscamos el patrón: /dieta rut [ALGO] objetivo [OTRA COSA]\nconst match = text.match(/\\/dieta rut (.+) objetivo (.+)/i);\n\n// Paso 3: Si el texto del mensaje SÍ coincide con el patrón...\nif (match) {\n  // Extraemos las partes que nos interesan (el RUT y el objetivo).\n  const [, rutDelUsuario, objetivo] = match;\n\n  // Paso 4: Limpiar el RUT para que sea solo numérico.\n  // IMPORTANTE: Este método asume que la columna 'rut' en Supabase es de tipo numérico\n  // y fallará si el RUT del usuario termina en 'K'.\n  const rutLimpio = rutDelUsuario.replace(/[.-]/g, '');\n  const rutNumerico = parseInt(rutLimpio, 10);\n\n  // Verificamos si la limpieza y conversión a número fue exitosa.\n  if (isNaN(rutNumerico)) {\n    // Si no es un número válido (ej. por la 'K'), detenemos el flujo.\n    return null;\n  }\n\n  // Paso 5: Devolvemos los datos ya limpios y listos para los siguientes nodos.\n  return {\n    rut: rutNumerico,\n    objetivo: objetivo.trim(),\n    chat_id: message.chat.id\n  };\n}\n\n// Paso 6: Si el texto del mensaje NO coincide con el patrón, detenemos el flujo.\nreturn null;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        670,
+        -560
+      ],
+      "id": "9ad7ba2a-6002-4a81-8d72-b65b4465961a",
+      "name": "Code",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "useCustomSchema": true,
+        "operation": "get",
+        "tableId": "pacientes",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "rut",
+              "keyValue": "={{ $('Code').item.json.rut }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        960,
+        -560
+      ],
+      "id": "1fe61427-6f0b-4829-9067-96d971e443fd",
+      "name": "Get Patient",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "HV4K33eG2yYCs7os",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Este es el código completo para el Nodo de Función.\n\n// Paso 1: Obtener los datos del paciente y el objetivo de los nodos anteriores.\n// Los datos del paciente vienen del nodo justo anterior (Supabase: Get Patient).\nconst paciente = $json;\n\n// El objetivo viene del nodo \"Parse Command\", así que lo referenciamos por su nombre.\nconst objetivo = $('Code').item.json.objetivo;\n\n\n// Paso 2: Calcular la Tasa Metabólica Basal (BMR) usando la fórmula de Harris-Benedict.\nlet bmr;\nif (paciente.genero.toLowerCase() === 'masculino') {\n  bmr = 88.362 + (13.397 * paciente.peso_kg) + (4.799 * paciente.altura_cm) - (5.677 * paciente.edad);\n} else { // Asumimos Femenino\n  bmr = 447.593 + (9.247 * paciente.peso_kg) + (3.098 * paciente.altura_cm) - (4.330 * paciente.edad);\n}\n\n// Paso 3: Calcular el Gasto Energético Diario Total (TDEE).\n// Se multiplica el BMR por un factor de actividad. Usaremos 1.2 (sedentario) como base.\n// NOTA: Este factor se puede hacer más complejo si en el futuro se añade el nivel de actividad del paciente.\nconst tdee = bmr * 1.2;\n\n\n// Paso 4: Ajustar las calorías según el objetivo del paciente.\nlet caloriasObjetivo;\nswitch (objetivo.toLowerCase()) {\n  case 'perder peso':\n    caloriasObjetivo = tdee - 500; // Déficit calórico\n    break;\n  case 'ganar musculo':\n    caloriasObjetivo = tdee + 500; // Superávit calórico\n    break;\n  case 'mantener':\n  default:\n    caloriasObjetivo = tdee; // Mantener calorías\n}\n\n// Paso 5: Distribuir las calorías en macronutrientes (ej. 40% Carbs, 30% Proteínas, 30% Grasas).\nconst macros = {\n  // 1g de proteína = 4 kcal\n  proteinas: Math.round((caloriasObjetivo * 0.30) / 4),\n  // 1g de carbohidratos = 4 kcal\n  carbohidratos: Math.round((caloriasObjetivo * 0.40) / 4),\n  // 1g de grasa = 9 kcal\n  grasas: Math.round((caloriasObjetivo * 0.30) / 9)\n};\n\n\n// Paso 6: Devolver todos los cálculos en un objeto estructurado para el siguiente nodo (OpenAI).\nreturn {\n  paciente_id: paciente.id,\n  // Asumimos que el nutricionista es el 'usuario_id' asociado al paciente.\n  creada_por: paciente.usuario_id,\n  calorias_objetivo: Math.round(caloriasObjetivo),\n  macros: macros,\n  objetivo: objetivo\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        -560
+      ],
+      "id": "cbe959e9-3bb8-4983-b873-8146668332e8",
+      "name": "Code1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "chatgpt-4o-latest",
+          "mode": "list",
+          "cachedResultName": "CHATGPT-4O-LATEST"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Eres un nutricionista experto. Crea un plan de comidas detallado para un día basado en los siguientes requerimientos:\\n- Calorías Totales: {{ $json.calorias_objetivo }}\\n- Proteínas: {{ $json.macros.proteinas }}g\\n- Carbohidratos: {{ $json.macros.carbohidratos }}g\\n- Grasas: {{ $json.macros.grasas }}g\\n\\nGenera 3 comidas principales (Desayuno, Almuerzo, Cena). Para cada comida, proporciona el nombre, calorías y un objeto 'macros' con 'proteinas', 'carbohidratos' y 'grasas'.\\n\\nEstructura tu respuesta únicamente como un objeto JSON con una clave 'plan_comidas' que contenga una lista de estas comidas. Intenta variar entre recetas y considerar comidas chilenas o creada con ingredientes que encuentras en Chile."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1400,
+        -560
+      ],
+      "id": "deb6d29d-800b-4bd7-9876-512f5bd7441b",
+      "name": "Message a model",
+      "credentials": {
+        "openAiApi": {
+          "id": "zlfVM3E7bz3IcKpx",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * ======================================================\n * NODO: CONSTRUIR MENSAJE FINAL\n * ======================================================\n * Su única misión es preparar el texto que se enviará por Telegram.\n*/\n\n// --- PASO 1: RECOGER LOS INGREDIENTES ---\nconst paciente = $('Get Patient').item.json;\nconst calculos = $('Code1').item.json;\nconst respuestaOpenAI = $('Message a model').item.json;\n\n\n// --- PASO 2: \"DESEMPAQUETAR\" EL PLAN DE COMIDAS ---\nconst plan = JSON.parse(respuestaOpenAI.message.content);\n\n\n// --- PASO 3: CONSTRUIR EL MENSAJE PIEZA POR PIEZA ---\nconst resumen = `✅ ¡Dieta creada para **${paciente.nombre}**!\\n\\n**Objetivo**: ${calculos.objetivo}\\n**Calorías**: ${calculos.calorias_objetivo} kcal\\n\\n---`;\n\nconst detalleDieta = plan.plan_comidas.map(comida =>\n  `\\n*${comida.nombre}* (${comida.calorias} kcal)\\n  - Proteínas: ${comida.macros.proteinas}g\\n  - Carbs: ${comida.macros.carbohidratos}g\\n  - Grasas: ${comida.macros.grasas}g`\n).join('');\n\nconst mensajeFinal = resumen + \"\\n**Plan de Comidas Sugerido:**\" + detalleDieta;\n\n\n// --- PASO 4: DEVOLVER EL MENSAJE EN LA \"CAJA\" CORRECTA PARA N8N ---\n// En lugar de devolver solo el texto, lo envolvemos en la estructura que n8n espera.\nreturn [{\n  json: {\n    message: mensajeFinal\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -560
+      ],
+      "id": "177b3853-49ee-4b43-b4a6-da833641d28d",
+      "name": "Code2",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "2d5860ee-ff50-415b-8bc5-d87b517d208f"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "bd76a040-f6ae-4a45-b116-cb1e154f2ca2",
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/dieta rut [ALGO] objetivo [OTRA COSA]",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "6ba6633f-4cb2-4981-bcd9-093c36921bc3",
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEmpty",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        380,
+        -560
+      ],
+      "id": "e273a73c-37bc-4728-ba29-4c97aac95717",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "content": "## OPCION 3\nEsto permite hablar de cualquier tema con el asistente",
+        "height": 517,
+        "width": 738,
+        "color": 7
+      },
+      "id": "9f8ca61b-9c85-4a1f-bae7-4ddf28eab378",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        640,
+        -220
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Switch').item.json.message.from.id }}",
+        "contextWindowLength": 20
+      },
+      "id": "cc9db4db-eda5-45f3-90b7-b1da7b6eea11",
+      "name": "Simple Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "position": [
+        860,
+        140
+      ],
+      "typeVersion": 1.3
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.message.text }}",
+        "options": {
+          "systemMessage": "Eres un asistente nutricional experto diseñado para colaborar estrechamente con una nutricionista humana. Su función principal es apoyar con información basada en evidencia sobre nutrición, diseñar planes alimenticios personalizados según indicaciones médicas o nutricionales, analizar hábitos alimenticios, y ayudar a sistematizar el seguimiento de pacientes. Está capacitado para interpretar información médica básica relacionada con la nutrición (por ejemplo, IMC, diagnósticos comunes como diabetes tipo 2, hipertensión, etc.) y adaptarla al contexto de los planes propuestos. Evita emitir diagnósticos médicos o sustituir el juicio clínico profesional. Su lenguaje debe ser claro, preciso y profesional, adaptándose al nivel técnico del interlocutor (nutricionista o paciente). Puede hacer sugerencias, pero siempre invita a la nutricionista a validar las decisiones finales. No debe recetar suplementos, medicamentos o intervenir en patologías complejas sin validación profesional."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        720,
+        -100
+      ],
+      "id": "8e09decf-8fc2-47c6-aaff-482a41f19b9a",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        720,
+        140
+      ],
+      "id": "440996b3-d3fd-4802-8223-d669b5caf9f4",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "zlfVM3E7bz3IcKpx",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $('AI Agent').item.json.output }}",
+        "additionalFields": {}
+      },
+      "id": "73ded7b0-30e4-459e-8c34-f73a172c6e5c",
+      "name": "Responde como asistente",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        -100
+      ],
+      "webhookId": "56d424b0-6d6f-4cf8-bd20-a815be386cab",
+      "credentials": {
+        "telegramApi": {
+          "id": "CKQwsF0GZQ3YH15M",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## OPCION 2\nBuscar informaciion de paciente en una BD",
+        "height": 360,
+        "width": 1540
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        640,
+        -660
+      ],
+      "typeVersion": 1,
+      "id": "d99e2e05-c45a-4d80-9acb-f923e4113103",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## OPCION 1\nSaludar no mas",
+        "height": 280,
+        "width": 280,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        640,
+        -980
+      ],
+      "typeVersion": 1,
+      "id": "8d328c5e-716e-4274-b4f5-6d5d704271a5",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "¡Hola! Soy 🤖 NutriAI, tu asistente nutricional. ¿Qué deseas hacer hoy?",
+        "additionalFields": {}
+      },
+      "id": "26e8a4b1-d404-4a35-9a83-a705e297ecdd",
+      "name": "Saludar",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [
+        680,
+        -880
+      ],
+      "webhookId": "56d424b0-6d6f-4cf8-bd20-a815be386cab",
+      "credentials": {
+        "telegramApi": {
+          "id": "CKQwsF0GZQ3YH15M",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Get Patient",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Patient": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Send Confirmation": {
+      "main": [
+        []
+      ]
+    },
+    "Code2": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Saludar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Responde como asistente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Saludar": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "3896367c-692e-476f-9117-bfc336ad3557",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8285bc6bf5e271563c73e84e78bc144d592f2c83d8adf3a614784b04662030ae"
+  },
+  "id": "odVVNpwupwRwn3uV",
+  "tags": [
+    {
+      "name": "aicompanion",
+      "id": "3ryx2seCr8nTFgtm",
+      "createdAt": "2025-07-10T20:50:08.000Z",
+      "updatedAt": "2025-07-10T20:50:08.000Z"
+    }
+  ]
+}
