@@ -1,0 +1,28 @@
+services:
+  ngrok:
+    image: ngrok/ngrok
+    container_name: ngroktaller
+    restart: unless-stopped
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: http n8n:5678 --domain=${NGROK_STATIC_DOMAIN}
+  n8n:
+    image: n8nio/n8n
+    container_name: n8ntaller
+    restart: always
+    env_file: .env-n8n
+    ports:
+      - "5678:5678"    # n8n corre en http://localhost:5678
+    volumes:
+      - ./n8n-data:/home/node/.n8n
+    environment:
+      - WEBHOOK_URL=${NGROK_STATIC_DOMAIN}
+      - N8N_EDITOR_BASE_URL=${NGROK_STATIC_DOMAIN}
+      - N8N_DEFAULT_BINARY_DATA_MODE=filesystem
+      - N8N_COMMUNITY_PACKAGE_ALL=true 
+      - DB_TYPE=sqlite
+      - GENERIC_TIMEZONE=America/Santiago
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
+      - N8N_SSL_REJECT_UNAUTHORIZED=false
+      - N8N_SSL_VERIFY=false
+
